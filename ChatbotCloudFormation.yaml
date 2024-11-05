@@ -1,0 +1,390 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Complete Setup for Chatbot Application with VPC, Security Groups, RDS, S3, Secrets Manager, Lambda, EC2, and Application Load Balancer
+
+Parameters:
+  AccessKeyId:
+    Type: String
+    Description: AWS Access Key ID
+    NoEcho: true
+
+  SecretAccessKey:
+    Type: String
+    Description: AWS Secret Access Key
+    NoEcho: true
+
+  SessionToken:
+    Type: String
+    Description: AWS Session Token
+    NoEcho: true
+
+Resources:
+  # VPC
+  ChatbotVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.1.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: chatbot-vpc
+
+  # Internet Gateway
+  ChatbotInternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  ChatbotVPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref ChatbotVPC
+      InternetGatewayId: !Ref ChatbotInternetGateway
+
+  # Subnets
+  ChatbotPublicSubnet1a:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ChatbotVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: chatbot-public-subnet-1a
+
+  ChatbotPublicSubnet1b:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ChatbotVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: chatbot-public-subnet-1b
+
+  ChatbotPublicSubnet1c:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ChatbotVPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select [2, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: chatbot-public-subnet-1c
+
+  # Route Tables
+  ChatbotPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ChatbotVPC
+      Tags:
+        - Key: Name
+          Value: chatbot-public-rt
+
+  ChatbotPublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref ChatbotPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref ChatbotInternetGateway
+
+  # Route Table Associations
+  ChatbotPublicSubnet1aRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ChatbotPublicSubnet1a
+      RouteTableId: !Ref ChatbotPublicRouteTable
+
+  ChatbotPublicSubnet1bRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ChatbotPublicSubnet1b
+      RouteTableId: !Ref ChatbotPublicRouteTable
+
+  ChatbotPublicSubnet1cRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ChatbotPublicSubnet1c
+      RouteTableId: !Ref ChatbotPublicRouteTable
+
+  # Security Group for EC2
+  ChatbotPublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP, HTTPS, and SSH traffic
+      VpcId: !Ref ChatbotVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: chatbot-public-security-group
+
+  # Application Load Balancer
+  ChatbotLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: chatbot-alb
+      Scheme: internet-facing
+      Subnets:
+        - !Ref ChatbotPublicSubnet1a
+        - !Ref ChatbotPublicSubnet1b
+        - !Ref ChatbotPublicSubnet1c
+      SecurityGroups:
+        - !Ref ChatbotPublicSecurityGroup
+      Tags:
+        - Key: Name
+          Value: chatbot-load-balancer
+
+  # Target Group
+  ChatbotTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: chatbot-target-group
+      Port: 5000
+      Protocol: HTTP
+      VpcId: !Ref ChatbotVPC
+      TargetType: instance
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: '5000'
+      HealthCheckPath: /check
+
+  # Listener
+  ChatbotLoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ChatbotLoadBalancer
+      Port: 5000
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ChatbotTargetGroup
+
+  # S3 Bucket
+  ChatbotS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: chatbot-resumes
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        IgnorePublicAcls: false
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: ['GET', 'PUT', 'POST', 'DELETE', 'HEAD']
+            AllowedOrigins: ['*']
+            MaxAge: 3000
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: chatbot-s3-bucket
+
+  # S3 Bucket Policy - Make Public
+  ChatbotS3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ChatbotS3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: "*"
+            Action: "s3:GetObject"
+            Resource: !Sub "${ChatbotS3Bucket.Arn}/*"
+
+  # Secrets Manager for Chatbot Application
+  ChatbotSecretsManager:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: chatbot-app-secrets
+      Description: Secrets for the chatbot application
+      SecretString: !Sub |
+        {
+          "AWS_S3_BUCKET_NAME": "chatbot-resumes",
+          "AWS_REGION": "${AWS::Region}",
+          "OPENAI_API_KEY": "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",
+          "OPENAI_INSTRUCTIONS": "You are a portfolio webpage generator chatbot. {task: Using my resume, Generate a static HTML and CSS portfolio page with a really good looking UI and CSS, features: [Add header], theme: [light, blue, Minimal], additional_info: [Only give code, no explanation, no any other text, nothing else. Keep everything in a single file index.html Use internal CSS and js]}",
+          "JWT_SECRET_KEY": "eyJhbGciOiJIUzI1NiJ9.eyJSb2xlIjoiQWRtaW4iLCJJc3N1ZXIiOiJoYXJzaCIsIlVzZXJuYW1lIjoiaGFyc2h2YWdoIiwiZXhwIjoxNzM0NTM5ODU3LCJpYXQiOjE3MjI2MTY2NTd9.UcOrVjm0ec4kNsyDXHizlZhXKfA0K3ki9Fe0ldoB5pc"
+        }
+      Tags:
+        - Key: Name
+          Value: chatbot-secrets
+
+  # Lambda Function
+  ChatbotLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ChatGPTPortfolioGenerator
+      Role: arn:aws:iam::413311705286:role/LabRole
+      Code:
+        ImageUri: 413311705286.dkr.ecr.us-east-1.amazonaws.com/call_chat_gpt:latest
+      PackageType: Image
+      Timeout: 120
+      MemorySize: 512
+      Environment:
+        Variables:
+          SECRETS_ARN: !Ref ChatbotSecretsManager
+          KEY_ID: !Ref AccessKeyId
+          ACCESS_KEY: !Ref SecretAccessKey
+          TOKEN: !Ref SessionToken
+
+  LabInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - 'LabRole'
+
+  # EC2 Instance
+  ChatbotEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: 't2.medium'
+      KeyName: "vockey"
+      ImageId: ami-0ae8f15ae66fe8cda # Amazon Linux 2023 AMI (Free tier eligible)
+      IamInstanceProfile: !Ref LabInstanceProfile
+      SecurityGroupIds:
+        - !Ref ChatbotPublicSecurityGroup
+      SubnetId: !Ref ChatbotPublicSubnet1a
+      Tags:
+        - Key: Name
+          Value: chatbot-frontend-ec2
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+
+          yum install docker -y
+          systemctl start docker
+          systemctl enable docker
+          docker --version
+
+          yum install -y https://dev.mysql.com/get/mysql57-community-release-el7-11.noarch.rpm
+          rpm --import https://repo.mysql.com/RPM-GPG-KEY-mysql-2022
+          yum install -y mysql-community-server
+
+          systemctl start mysqld
+          systemctl enable mysqld
+
+          sed -i 's/\[mysqld\]/[mysqld]\nbind-address=0.0.0.0/' /etc/my.cnf
+          systemctl restart mysqld
+
+          TEMP_PASSWORD=$(sudo grep 'temporary password' /var/log/mysqld.log | awk '{print $NF}')
+
+          mysql -u root -p"$TEMP_PASSWORD" --connect-expired-password <<EOF
+          ALTER USER 'root'@'localhost' IDENTIFIED BY 'Chatb0t_DB';
+
+          CREATE DATABASE IF NOT EXISTS chatbot_db;
+          USE chatbot_db;
+
+          CREATE TABLE IF NOT EXISTS users (
+              id INT PRIMARY KEY AUTO_INCREMENT,
+              name VARCHAR(100) NOT NULL,
+              email VARCHAR(100) UNIQUE NOT NULL,
+              password VARCHAR(60) NOT NULL
+          );
+
+          CREATE TABLE IF NOT EXISTS chats (
+              id INT PRIMARY KEY AUTO_INCREMENT,
+              title VARCHAR(100) NOT NULL,
+              additional_description TEXT,
+              resume_url VARCHAR(100) NOT NULL,
+              page_url VARCHAR(100) NOT NULL,
+              user_id INT NOT NULL,
+              FOREIGN KEY (user_id) REFERENCES users(id)
+          );
+
+          CREATE TABLE IF NOT EXISTS messages (
+              id INT PRIMARY KEY AUTO_INCREMENT,
+              sender VARCHAR(50) NOT NULL,
+              text TEXT NOT NULL,
+              timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              chat_id INT NOT NULL,
+              FOREIGN KEY (chat_id) REFERENCES chats(id)
+          );
+
+          GRANT ALL PRIVILEGES ON chatbot_db.* TO 'root'@'%';
+          FLUSH PRIVILEGES;
+          EOF
+
+          TOKEN=$(curl -s --max-time 3 --retry 3 --retry-delay 0 --retry-max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+          PUBLIC_IP=$(curl -s --max-time 3 --retry 3 --retry-delay 0 --retry-max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" "http://169.254.169.254/latest/meta-data/public-ipv4")
+
+          docker run -d --network="host" -e REACT_APP_API_URL=http://$PUBLIC_IP:5000 harshvagh123/chatbot-ui
+
+          aws s3 cp s3://portfolio-chatbot-files/.env /root/.env
+
+          # Run the backend Docker container with the environment variables
+          docker run -d --network="host" --env-file /root/.env harshvagh123/chatbot-backend
+
+  # EC2 Instance Target for ALB
+  ChatbotEC2InstanceTarget:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: chatbot-ec2-target
+      Port: 5000
+      Protocol: HTTP
+      VpcId: !Ref ChatbotVPC
+      TargetType: instance
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: '5000'
+      HealthCheckPath: /check
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref ChatbotVPC
+
+  PublicSubnet1a:
+    Description: Public Subnet 1a
+    Value: !Ref ChatbotPublicSubnet1a
+
+  PublicSubnet1b:
+    Description: Public Subnet 1b
+    Value: !Ref ChatbotPublicSubnet1b
+
+  PublicSubnet1c:
+    Description: Public Subnet 1c
+    Value: !Ref ChatbotPublicSubnet1c
+
+  PublicSecurityGroupId:
+    Description: Security Group ID for EC2 instances
+    Value: !Ref ChatbotPublicSecurityGroup
+
+  S3BucketName:
+    Description: S3 Bucket Name
+    Value: !Ref ChatbotS3Bucket
+
+  SecretARN:
+    Description: ARN of the Secrets Manager secret
+    Value: !Ref ChatbotSecretsManager
+
+  LoadBalancerDNSName:
+    Description: DNS Name of the Application Load Balancer
+    Value: !GetAtt ChatbotLoadBalancer.DNSName
+
+  EC2PublicDNS:
+    Description: Public DNS of the EC2 instance
+    Value: !GetAtt ChatbotEC2Instance.PublicDnsName

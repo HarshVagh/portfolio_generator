@@ -1,0 +1,14 @@
+Flask
+Flask-SQLAlchemy
+Flask-JWT-Extended
+Flask-Migrate
+Flask-Cors
+Flask-Bcrypt
+PyPDF2
+boto3
+cryptography
+python-dotenv
+gunicorn
+PyMySQL
+mysqlclient
+requests
